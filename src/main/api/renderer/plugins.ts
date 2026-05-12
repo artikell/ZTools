@@ -115,8 +115,11 @@ export class PluginsAPI {
       this.killPluginAndReturn(pluginPath)
     )
     ipcMain.handle('fetch-plugin-market', () => this.market.fetchPluginMarket())
-    ipcMain.handle('install-plugin-from-market', (_event, plugin: any) =>
-      this.installer.installPluginFromMarket(plugin)
+    ipcMain.handle('install-plugin-from-market', (event, plugin: any) =>
+      this.installer.installPluginFromMarket(plugin, event.sender)
+    )
+    ipcMain.handle('cancel-plugin-market-download', (_event, pluginNameOrTaskId: string) =>
+      this.installer.cancelPluginMarketDownload(pluginNameOrTaskId)
     )
     ipcMain.handle('get-plugin-readme', (_event, pluginPathOrName: string, pluginName?: string) =>
       this.getPluginReadme(pluginPathOrName, pluginName)

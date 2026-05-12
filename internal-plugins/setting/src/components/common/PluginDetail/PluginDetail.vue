@@ -4,12 +4,13 @@ import { DetailPanel } from '@/components'
 import PluginDetailHeader from './PluginDetailHeader.vue'
 import PluginDetailTabs from './PluginDetailTabs.vue'
 import PluginDetailToolbar from './PluginDetailToolbar.vue'
-import type { PluginItem, TabId } from './types'
+import type { PluginDownloadState, PluginItem, TabId } from './types'
 import { usePluginDetail } from './usePluginDetail'
 
 const props = defineProps<{
   plugin: PluginItem
   isLoading?: boolean
+  downloadState?: PluginDownloadState
   isRunning?: boolean
   // 已安装插件特有
   isPinned?: boolean
@@ -117,6 +118,7 @@ function onSwitchTab(tabId: TabId): void {
     <PluginDetailHeader
       :plugin="plugin"
       :is-loading="isLoading"
+      :download-state="downloadState"
       :can-upgrade="canUpgrade"
       :show-size="showSize"
       @download="emit('download')"

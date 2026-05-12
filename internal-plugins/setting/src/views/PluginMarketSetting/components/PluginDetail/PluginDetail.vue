@@ -2,10 +2,12 @@
 import { nextTick, ref } from 'vue'
 import { PluginDetail as SharedPluginDetail } from '@/components'
 import type { TabId } from '@/components'
+import type { PluginDownloadState } from '../types'
 
 const props = defineProps<{
   plugin: any
   isLoading?: boolean
+  downloadState?: PluginDownloadState
   isRunning?: boolean
 }>()
 
@@ -63,6 +65,7 @@ function handleTabSwitch(tabId: TabId): void {
   <SharedPluginDetail
     :plugin="plugin"
     :is-loading="isLoading"
+    :download-state="downloadState"
     :is-running="isRunning"
     :show-comments="true"
     :show-size="true"

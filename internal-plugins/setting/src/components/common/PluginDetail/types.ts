@@ -33,3 +33,12 @@ export interface TabItem {
   id: TabId
   label: string
 }
+
+export interface PluginDownloadState {
+  taskId?: string
+  status: 'downloading' | 'installing' | 'success' | 'error' | 'cancelled'
+  progress: number | null
+  receivedBytes?: number
+  totalBytes?: number
+  error?: string
+}

@@ -386,8 +386,18 @@ export class InternalPluginAPI {
       if (!requireInternalPlugin(this.pluginManager, event)) {
         throw new PermissionDeniedError('internal:install-plugin-from-market')
       }
-      return await pluginsAPI.installer.installPluginFromMarket(plugin)
+      return await pluginsAPI.installer.installPluginFromMarket(plugin, event.sender)
     })
+
+    ipcMain.handle(
+      'internal:cancel-plugin-market-download',
+      async (event, pluginNameOrTaskId: string) => {
+        if (!requireInternalPlugin(this.pluginManager, event)) {
+          throw new PermissionDeniedError('internal:cancel-plugin-market-download')
+        }
+        return pluginsAPI.installer.cancelPluginMarketDownload(pluginNameOrTaskId)
+      }
+    )
 
     ipcMain.handle(
       'internal:install-plugin-from-npm',

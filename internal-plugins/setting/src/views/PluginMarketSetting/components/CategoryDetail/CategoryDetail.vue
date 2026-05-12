@@ -4,12 +4,13 @@ import { DetailPanel } from '@/components'
 import { shuffleArray } from '@/utils'
 import { PluginCard } from '../PluginCard'
 import { RefreshButton } from '../RefreshButton'
-import type { Plugin, CategoryInfo, CategoryLayoutSection } from '../types'
+import type { Plugin, CategoryInfo, CategoryLayoutSection, PluginDownloadState } from '../types'
 
 const props = defineProps<{
   category: CategoryInfo
   layout: CategoryLayoutSection[]
   installingPlugin: string | null
+  downloadStates: Record<string, PluginDownloadState | undefined>
   pluginMap: Map<string, Plugin>
   canUpgrade: (plugin: Plugin) => boolean
 }>()
@@ -111,6 +112,7 @@ function shuffleSection(): void {
             :key="plugin.name"
             :plugin="plugin"
             :installing-plugin="installingPlugin"
+            :download-state="downloadStates[plugin.name]"
             :can-upgrade="canUpgrade(plugin)"
             @click="$emit('click-plugin', plugin)"
             @open="$emit('open-plugin', plugin)"

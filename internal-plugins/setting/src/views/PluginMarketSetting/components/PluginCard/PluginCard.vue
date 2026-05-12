@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { AdaptiveIcon } from '@/components'
-import type { Plugin } from '../types'
+import ProgressCircleButton from '@/components/common/ProgressCircleButton/ProgressCircleButton.vue'
+import type { Plugin, PluginDownloadState } from '../types'
 
 defineProps<{
   plugin: Plugin
   installingPlugin: string | null
   canUpgrade: boolean
+  downloadState?: PluginDownloadState
 }>()
 
 defineEmits<{
@@ -30,14 +32,44 @@ defineEmits<{
       <template v-if="plugin.installed">
         <button
           v-if="canUpgrade"
-          class="btn btn-md btn-warning"
+          class="icon-btn upgrade-btn"
+          :title="`升级到 v${plugin.version}`"
           :disabled="installingPlugin === plugin.name"
           @click.stop="$emit('upgrade')"
         >
           <div v-if="installingPlugin === plugin.name" class="btn-loading">
             <div class="spinner"></div>
           </div>
-          <span v-else>升级</span>
+          <svg
+            v-else
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M12 19V5"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M5 12L12 5L19 12"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M5 21H19"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
         </button>
         <button v-else class="icon-btn open-btn" title="打开" @click.stop="$emit('open')">
           <svg
@@ -55,16 +87,20 @@ defineEmits<{
           </svg>
         </button>
       </template>
-      <button
+      <ProgressCircleButton
         v-else
-        class="icon-btn download-btn"
+        class="download-btn"
         title="下载"
-        :disabled="installingPlugin === plugin.name"
+        :active-title="downloadState?.status === 'installing' ? '安装中' : '取消下载'"
+        :active="!!downloadState"
+        :progress="downloadState?.progress ?? null"
+        :disabled="
+          downloadState?.status === 'installing' ||
+          (!!installingPlugin && installingPlugin !== plugin.name)
+        "
         @click.stop="$emit('download')"
       >
-        <div v-if="installingPlugin === plugin.name" class="spinner"></div>
         <svg
-          v-else
           width="14"
           height="14"
           viewBox="0 0 24 24"
@@ -93,7 +129,7 @@ defineEmits<{
             stroke-linejoin="round"
           />
         </svg>
-      </button>
+      </ProgressCircleButton>
     </div>
   </div>
 </template>
@@ -158,8 +194,13 @@ defineEmits<{
   color: var(--primary-color);
 }
 
-.open-btn:hover:not(:disabled) {
+.open-btn:hover:not(:disabled),
+.upgrade-btn:hover:not(:disabled) {
   background: var(--primary-light-bg);
+}
+
+.upgrade-btn {
+  color: var(--primary-color);
 }
 
 .download-btn {
@@ -185,12 +226,6 @@ defineEmits<{
   border-right-color: currentColor;
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
-}
-
-/* 升级按钮中的 spinner */
-.btn-warning .spinner {
-  border-top-color: var(--text-on-primary);
-  border-right-color: var(--text-on-primary);
 }
 
 @keyframes spin {

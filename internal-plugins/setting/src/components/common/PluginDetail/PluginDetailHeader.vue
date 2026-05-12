@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import type { PluginItem } from './types'
+import ProgressCircleButton from '@/components/common/ProgressCircleButton/ProgressCircleButton.vue'
+import type { PluginDownloadState, PluginItem } from './types'
 
 const props = defineProps<{
   plugin: PluginItem
   isLoading?: boolean
+  downloadState?: PluginDownloadState
   canUpgrade: boolean
   showSize?: boolean
 }>()
@@ -57,26 +59,58 @@ function openHomepage(): void {
         <template v-if="plugin.installed">
           <button
             v-if="canUpgrade"
-            class="btn btn-md btn-warning"
+            class="upgrade-icon-btn"
+            :title="`升级到 v${plugin.version}`"
             :disabled="isLoading"
             @click="emit('upgrade')"
           >
             <div v-if="isLoading" class="btn-loading">
               <div class="spinner"></div>
             </div>
-            <span v-else>升级到 v{{ plugin.version }}</span>
+            <svg
+              v-else
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M12 19V5"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M5 12L12 5L19 12"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M5 21H19"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
           </button>
         </template>
-        <button
+        <ProgressCircleButton
           v-else
-          class="btn btn-icon"
+          class="detail-download-btn"
           title="下载"
-          :disabled="isLoading"
+          :active-title="downloadState?.status === 'installing' ? '安装中' : '取消下载'"
+          :size="36"
+          :active="!!downloadState"
+          :progress="downloadState?.progress ?? null"
+          :disabled="downloadState?.status === 'installing' || (isLoading && !downloadState)"
           @click="emit('download')"
         >
-          <div v-if="isLoading" class="spinner"></div>
           <svg
-            v-else
             width="20"
             height="20"
             viewBox="0 0 24 24"
@@ -105,7 +139,7 @@ function openHomepage(): void {
               stroke-linejoin="round"
             />
           </svg>
-        </button>
+        </ProgressCircleButton>
       </div>
     </div>
 
@@ -260,6 +294,36 @@ function openHomepage(): void {
   min-width: 60px;
 }
 
+.upgrade-icon-btn {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--primary-color);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 0.2s,
+    opacity 0.2s;
+}
+
+.upgrade-icon-btn:hover:not(:disabled) {
+  background: var(--primary-light-bg);
+}
+
+.upgrade-icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.detail-download-btn {
+  flex-shrink: 0;
+}
+
 .btn-loading {
   display: flex;
   align-items: center;
@@ -274,11 +338,6 @@ function openHomepage(): void {
   border-right-color: currentColor;
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
-}
-
-.btn-warning .spinner {
-  border-top-color: var(--text-on-primary);
-  border-right-color: var(--text-on-primary);
 }
 
 @keyframes spin {

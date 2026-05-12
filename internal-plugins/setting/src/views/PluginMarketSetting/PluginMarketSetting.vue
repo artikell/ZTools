@@ -8,7 +8,7 @@ import {
   weightedSearch
 } from '@/utils'
 import { PluginDetail, PluginCard, CategoryCard, CategoryDetail, RefreshButton } from './components'
-import type { Plugin, CategoryInfo, CategoryLayoutSection } from './components'
+import type { Plugin, CategoryInfo, CategoryLayoutSection, PluginDownloadState } from './components'
 import { useJumpFunction, useZtoolsSubInput } from '@/composables'
 import { PluginMarketSettingJumpFunction } from '@/views/PluginMarketSetting/PluginMarketSetting'
 
@@ -77,6 +77,8 @@ const storefrontCategories = ref<Record<string, CategoryInfo>>({})
 const categoryLayouts = ref<Record<string, CategoryLayoutSection[]>>({})
 const isLoading = ref(false)
 const installingPlugin = ref<string | null>(null)
+const downloadStates = ref<Record<string, PluginDownloadState | undefined>>({})
+let stopDownloadProgressListener: (() => void) | undefined
 
 const { value: searchQuery, setSubInput } = useZtoolsSubInput('', '搜索插件市场...')
 
@@ -308,10 +310,63 @@ async function handleUpgradePlugin(plugin: Plugin): Promise<void> {
   }
 }
 
+function setDownloadState(pluginName: string, state: PluginDownloadState): void {
+  downloadStates.value = {
+    ...downloadStates.value,
+    [pluginName]: state
+  }
+}
+
+function clearDownloadState(pluginName: string, taskId?: string): void {
+  const currentState = downloadStates.value[pluginName]
+  if (taskId && currentState?.taskId && currentState.taskId !== taskId) return
+
+  const nextStates = { ...downloadStates.value }
+  delete nextStates[pluginName]
+  downloadStates.value = nextStates
+}
+
+function handleDownloadProgress(payload: PluginDownloadState & { pluginName: string }): void {
+  if (!payload.pluginName) return
+
+  setDownloadState(payload.pluginName, {
+    taskId: payload.taskId,
+    status: payload.status,
+    progress: payload.progress,
+    receivedBytes: payload.receivedBytes,
+    totalBytes: payload.totalBytes,
+    error: payload.error
+  })
+
+  if (
+    payload.status === 'success' ||
+    payload.status === 'error' ||
+    payload.status === 'cancelled'
+  ) {
+    window.setTimeout(() => clearDownloadState(payload.pluginName, payload.taskId), 300)
+  }
+}
+
 async function downloadPlugin(plugin: Plugin): Promise<void> {
+  const currentState = downloadStates.value[plugin.name]
+  if (currentState?.status === 'downloading') {
+    const cancelResult = await window.ztools.internal.cancelPluginMarketDownload(
+      currentState.taskId || plugin.name
+    )
+    if (!cancelResult.success) {
+      error(`取消下载失败: ${cancelResult.error || '未知错误'}`)
+    }
+    return
+  }
+
   if (installingPlugin.value) return
 
   installingPlugin.value = plugin.name
+  setDownloadState(plugin.name, {
+    status: 'downloading',
+    progress: null
+  })
+
   try {
     const result = await window.ztools.internal.installPluginFromMarket(
       JSON.parse(JSON.stringify(plugin))
@@ -322,6 +377,8 @@ async function downloadPlugin(plugin: Plugin): Promise<void> {
       if (result.plugin && result.plugin.path) {
         plugin.path = result.plugin.path
       }
+    } else if (result.cancelled) {
+      clearDownloadState(plugin.name)
     } else {
       console.error('插件安装失败:', result.error)
       error(`安装失败: ${result.error}`)
@@ -331,6 +388,7 @@ async function downloadPlugin(plugin: Plugin): Promise<void> {
     error(`安装出错: ${err instanceof Error ? err.message : '未知错误'}`)
   } finally {
     installingPlugin.value = null
+    clearDownloadState(plugin.name)
   }
 }
 
@@ -412,10 +470,13 @@ useJumpFunction<PluginMarketSettingJumpFunction>((state) => {
 
 onMounted(() => {
   fetchPlugins()
+  stopDownloadProgressListener =
+    window.ztools.internal.onPluginMarketDownloadProgress(handleDownloadProgress)
   window.addEventListener('keydown', handleKeydown, true)
 })
 
 onUnmounted(() => {
+  stopDownloadProgressListener?.()
   window.removeEventListener('keydown', handleKeydown, true)
 })
 </script>
@@ -455,6 +516,7 @@ onUnmounted(() => {
               :key="plugin.name"
               :plugin="plugin"
               :installing-plugin="installingPlugin"
+              :download-state="downloadStates[plugin.name]"
               :can-upgrade="canUpgrade(plugin)"
               @click="openPluginDetail(plugin)"
               @open="handleOpenPlugin(plugin)"
@@ -519,6 +581,7 @@ onUnmounted(() => {
                     :key="plugin.name"
                     :plugin="plugin"
                     :installing-plugin="installingPlugin"
+                    :download-state="downloadStates[plugin.name]"
                     :can-upgrade="canUpgrade(plugin)"
                     @click="openPluginDetail(plugin)"
                     @open="handleOpenPlugin(plugin)"
@@ -557,6 +620,7 @@ onUnmounted(() => {
               :key="plugin.name"
               :plugin="plugin"
               :installing-plugin="installingPlugin"
+              :download-state="downloadStates[plugin.name]"
               :can-upgrade="canUpgrade(plugin)"
               @click="openPluginDetail(plugin)"
               @open="handleOpenPlugin(plugin)"
@@ -579,6 +643,7 @@ onUnmounted(() => {
           :category="selectedCategory"
           :layout="getCategoryLayout(selectedCategory.key)"
           :installing-plugin="installingPlugin"
+          :download-states="downloadStates"
           :plugin-map="pluginMap"
           :can-upgrade="canUpgrade"
           @back="closeCategoryDetail"
@@ -596,6 +661,7 @@ onUnmounted(() => {
         v-if="isDetailVisible && selectedPlugin"
         :plugin="selectedPlugin"
         :is-loading="installingPlugin === selectedPlugin.name"
+        :download-state="downloadStates[selectedPlugin.name]"
         @back="closePluginDetail"
         @open="handleOpenPlugin(selectedPlugin)"
         @download="downloadPlugin(selectedPlugin)"

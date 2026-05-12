@@ -1,12 +1,75 @@
 import { net, session } from 'electron'
-import { promises as fs } from 'fs'
+import { createWriteStream } from 'fs'
 
-export async function downloadFile(url: string, filePath: string): Promise<void> {
+export interface DownloadProgress {
+  receivedBytes: number
+  totalBytes?: number
+  percent: number | null
+}
+
+export interface DownloadFileOptions {
+  signal?: AbortSignal
+  onProgress?: (progress: DownloadProgress) => void
+}
+
+export class DownloadCancelledError extends Error {
+  constructor() {
+    super('下载已取消')
+    this.name = 'DownloadCancelledError'
+  }
+}
+
+export async function downloadFile(
+  url: string,
+  filePath: string,
+  options: DownloadFileOptions = {}
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
+    if (options.signal?.aborted) {
+      reject(new DownloadCancelledError())
+      return
+    }
+
+    let settled = false
+    let writeStream: ReturnType<typeof createWriteStream> | null = null
     const request = net.request({
       url,
       session: session.defaultSession // 显式指定使用 defaultSession（确保代理配置生效）
     })
+
+    const cleanup = (): void => {
+      options.signal?.removeEventListener('abort', handleAbort)
+    }
+
+    const finish = (callback: () => void): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      callback()
+    }
+
+    const fail = (err: unknown): void => {
+      finish(() => {
+        try {
+          request.abort()
+        } catch {
+          // 忽略失败清理时的请求状态差异
+        }
+        writeStream?.destroy()
+        reject(err)
+      })
+    }
+
+    function handleAbort(): void {
+      try {
+        request.abort()
+      } catch {
+        // 忽略 abort 期间的底层请求状态差异
+      }
+      fail(new DownloadCancelledError())
+    }
+
+    options.signal?.addEventListener('abort', handleAbort, { once: true })
 
     // 禁用缓存的请求头（确保每次都下载最新文件）
     request.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
@@ -38,32 +101,69 @@ export async function downloadFile(url: string, filePath: string): Promise<void>
 
     request.on('response', (response) => {
       if (response.statusCode !== 200) {
-        reject(new Error(`下载失败: HTTP ${response.statusCode}`))
+        fail(new Error(`下载失败: HTTP ${response.statusCode}`))
         return
       }
 
-      const chunks: Buffer[] = []
-      response.on('data', (chunk) => {
-        chunks.push(chunk)
+      const contentLengthHeader = response.headers['content-length']
+      const contentLengthValue = Array.isArray(contentLengthHeader)
+        ? contentLengthHeader[0]
+        : contentLengthHeader
+      const totalBytes = contentLengthValue ? Number(contentLengthValue) : undefined
+      const hasTotalBytes = typeof totalBytes === 'number' && Number.isFinite(totalBytes)
+      let receivedBytes = 0
+
+      options.onProgress?.({
+        receivedBytes,
+        totalBytes: hasTotalBytes ? totalBytes : undefined,
+        percent: hasTotalBytes && totalBytes > 0 ? 0 : null
       })
 
-      response.on('end', async () => {
-        try {
-          const buffer = Buffer.concat(chunks)
-          await fs.writeFile(filePath, buffer)
-          resolve()
-        } catch (err) {
-          reject(err)
-        }
+      writeStream = createWriteStream(filePath)
+
+      response.on('data', (chunk) => {
+        if (settled) return
+        receivedBytes += Buffer.byteLength(chunk)
+        writeStream?.write(chunk)
+        options.onProgress?.({
+          receivedBytes,
+          totalBytes: hasTotalBytes ? totalBytes : undefined,
+          percent:
+            hasTotalBytes && totalBytes > 0
+              ? Math.min(100, (receivedBytes / totalBytes) * 100)
+              : null
+        })
+      })
+
+      response.on('end', () => {
+        if (settled) return
+        writeStream?.end()
+        options.onProgress?.({
+          receivedBytes,
+          totalBytes: hasTotalBytes ? totalBytes : undefined,
+          percent: hasTotalBytes && totalBytes > 0 ? 100 : null
+        })
       })
 
       response.on('error', (err) => {
-        reject(err)
+        fail(err)
+      })
+
+      writeStream.on('finish', () => {
+        finish(() => resolve())
+      })
+
+      writeStream.on('error', (err) => {
+        fail(err)
       })
     })
 
     request.on('error', (err) => {
-      reject(err)
+      if (options.signal?.aborted) {
+        fail(new DownloadCancelledError())
+        return
+      }
+      fail(err)
     })
 
     request.end()

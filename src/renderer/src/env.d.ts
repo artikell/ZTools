@@ -93,7 +93,12 @@ declare global {
         success: boolean
         error?: string
         plugin?: any
+        cancelled?: boolean
       }>
+      cancelPluginMarketDownload: (
+        pluginNameOrTaskId: string
+      ) => Promise<{ success: boolean; error?: string }>
+      onPluginMarketDownloadProgress: (callback: (payload: any) => void) => () => void
       installPluginFromNpm: (options: {
         packageName: string
         useChinaMirror?: boolean

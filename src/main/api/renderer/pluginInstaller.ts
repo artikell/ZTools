@@ -1,13 +1,13 @@
 import type { PluginManager } from '../../managers/pluginManager'
 import type { PluginDevProjectsAPI } from './pluginDevProjects'
-import { app, shell } from 'electron'
+import { app, shell, type WebContents } from 'electron'
 import { promises as fs } from 'fs'
 import path from 'path'
 import { pathToFileURL } from 'url'
 import * as tar from 'tar'
 import AdmZip from 'adm-zip'
 import { isValidZpx, extractZpx, readTextFromZpx, readFileFromZpx } from '../../utils/zpxArchive.js'
-import { downloadFile } from '../../utils/download.js'
+import { DownloadCancelledError, downloadFile } from '../../utils/download.js'
 import { httpGet } from '../../utils/httpRequest.js'
 import { sleep } from '../../utils/common.js'
 import databaseAPI from '../shared/database'
@@ -15,6 +15,26 @@ import { openDialog } from '../../utils/windowUtils'
 
 /** 插件的本地安装目录 */
 const PLUGIN_DIR = path.join(app.getPath('userData'), 'plugins')
+const MARKET_DOWNLOAD_PROGRESS_CHANNEL = 'plugin-market-download-progress'
+
+type MarketDownloadStatus = 'downloading' | 'installing' | 'success' | 'error' | 'cancelled'
+
+interface MarketDownloadProgressPayload {
+  pluginName: string
+  taskId: string
+  status: MarketDownloadStatus
+  progress: number | null
+  receivedBytes?: number
+  totalBytes?: number
+  error?: string
+}
+
+interface MarketDownloadTask {
+  pluginName: string
+  taskId: string
+  controller: AbortController
+  webContents?: WebContents
+}
 
 // ━━━ Types ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -49,6 +69,8 @@ export interface PluginInstallerDeps {
  * 通过 PluginInstallerDeps 依赖注入与主 PluginsAPI 解耦。
  */
 export class PluginInstallerAPI {
+  private marketDownloadTasks = new Map<string, MarketDownloadTask>()
+
   constructor(private deps: PluginInstallerDeps) {}
 
   /**
@@ -215,9 +237,32 @@ export class PluginInstallerAPI {
    * @param plugin - 市场插件对象，必须包含 name 和 downloadUrl 字段
    * @returns {success: boolean, plugin?: object, error?: string}
    */
-  public async installPluginFromMarket(plugin: any): Promise<any> {
+  public async installPluginFromMarket(plugin: any, webContents?: WebContents): Promise<any> {
+    const pluginName = plugin?.name
+    if (!pluginName) {
+      return { success: false, error: '无效的插件信息' }
+    }
+
+    if (this.marketDownloadTasks.has(pluginName)) {
+      return { success: false, error: '该插件正在下载中' }
+    }
+
+    const safePluginName = String(pluginName).replace(/[\\/]/g, '_')
+    const taskId = `${safePluginName}-${Date.now()}`
+    const controller = new AbortController()
+    const task: MarketDownloadTask = {
+      pluginName,
+      taskId,
+      controller,
+      webContents
+    }
+    this.marketDownloadTasks.set(pluginName, task)
+
+    const tempDir = path.join(app.getPath('temp'), 'ztools-plugin-download', taskId)
+    const tempFilePath = path.join(tempDir, `${safePluginName}.zpx`)
+
     try {
-      console.log('[Plugins] 开始从市场安装插件:', plugin.name)
+      console.log('[Plugins] 开始从市场安装插件:', pluginName)
       const downloadUrl = plugin.downloadUrl
       if (!downloadUrl) {
         return { success: false, error: '无效的下载链接' }
@@ -225,26 +270,52 @@ export class PluginInstallerAPI {
 
       console.log('[Plugins] 插件下载链接:', downloadUrl)
 
-      const tempDir = path.join(app.getPath('temp'), 'ztools-plugin-download')
       await fs.mkdir(tempDir, { recursive: true })
-      // 下载为 .zpx 后缀
-      const tempFilePath = path.join(tempDir, `${plugin.name}-${Date.now()}.zpx`)
+      this.emitMarketDownloadProgress(task, {
+        pluginName,
+        taskId,
+        status: 'downloading',
+        progress: 0
+      })
 
       let retryCount = 0
       const maxRetries = 3
       while (retryCount < maxRetries) {
         try {
-          await downloadFile(downloadUrl, tempFilePath)
+          await downloadFile(downloadUrl, tempFilePath, {
+            signal: controller.signal,
+            onProgress: (progress) => {
+              this.emitMarketDownloadProgress(task, {
+                pluginName,
+                taskId,
+                status: 'downloading',
+                progress: progress.percent,
+                receivedBytes: progress.receivedBytes,
+                totalBytes: progress.totalBytes
+              })
+            }
+          })
           break
         } catch (error) {
+          if (error instanceof DownloadCancelledError || controller.signal.aborted) {
+            throw error
+          }
           retryCount++
           console.error(`下载失败，重试第 ${retryCount} 次:`, error)
           if (retryCount >= maxRetries) throw error
+          await fs.rm(tempFilePath, { force: true })
           await sleep(500)
         }
       }
 
       console.log('[Plugins] 插件下载完成:', tempFilePath)
+      this.emitMarketDownloadProgress(task, {
+        pluginName,
+        taskId,
+        status: 'installing',
+        progress: 100
+      })
+
       // 自动检测格式并安装
       const { config: marketConfig, isZpx } = await this.readPluginJson(tempFilePath)
       console.log(`[Plugins] 市场插件格式: ${isZpx ? 'ZPX' : 'ZIP（兼容）'}`)
@@ -274,19 +345,58 @@ export class PluginInstallerAPI {
       }
 
       const result = await this.installFromPackageFile(tempFilePath, isZpx, marketConfig)
+      this.emitMarketDownloadProgress(task, {
+        pluginName,
+        taskId,
+        status: result.success ? 'success' : 'error',
+        progress: result.success ? 100 : null,
+        error: result.success ? undefined : result.error || '安装失败'
+      })
 
+      return result
+    } catch (error: unknown) {
+      if (error instanceof DownloadCancelledError || controller.signal.aborted) {
+        console.log('[Plugins] 市场插件下载已取消:', pluginName)
+        this.emitMarketDownloadProgress(task, {
+          pluginName,
+          taskId,
+          status: 'cancelled',
+          progress: null
+        })
+        return { success: false, cancelled: true, error: '已取消下载' }
+      }
+
+      console.error('[Plugins] 从市场安装插件失败:', error)
+      const message = error instanceof Error ? error.message : '安装失败'
+      this.emitMarketDownloadProgress(task, {
+        pluginName,
+        taskId,
+        status: 'error',
+        progress: null,
+        error: message
+      })
+      return { success: false, error: message }
+    } finally {
+      this.marketDownloadTasks.delete(pluginName)
       try {
-        await fs.unlink(tempFilePath)
         await fs.rm(tempDir, { recursive: true, force: true })
       } catch (e) {
         console.error('[Plugins] 清理下载临时文件失败:', e)
       }
-
-      return result
-    } catch (error: unknown) {
-      console.error('[Plugins] 从市场安装插件失败:', error)
-      return { success: false, error: error instanceof Error ? error.message : '安装失败' }
     }
+  }
+
+  public cancelPluginMarketDownload(pluginNameOrTaskId: string): {
+    success: boolean
+    error?: string
+  } {
+    const task = this.findMarketDownloadTask(pluginNameOrTaskId)
+    if (!task) {
+      return { success: false, error: '没有找到正在下载的插件' }
+    }
+
+    task.controller.abort()
+    return { success: true }
   }
 
   /**
@@ -524,6 +634,28 @@ export class PluginInstallerAPI {
   }
 
   // ━━━ Private ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  private findMarketDownloadTask(pluginNameOrTaskId: string): MarketDownloadTask | undefined {
+    const directTask = this.marketDownloadTasks.get(pluginNameOrTaskId)
+    if (directTask) return directTask
+
+    for (const task of this.marketDownloadTasks.values()) {
+      if (task.taskId === pluginNameOrTaskId) return task
+    }
+
+    return undefined
+  }
+
+  private emitMarketDownloadProgress(
+    task: MarketDownloadTask,
+    payload: MarketDownloadProgressPayload
+  ): void {
+    const target = task.webContents?.isDestroyed() ? undefined : task.webContents
+    const fallback = this.deps.mainWindow?.webContents
+    const sender = target || (fallback && !fallback.isDestroyed() ? fallback : undefined)
+
+    sender?.send(MARKET_DOWNLOAD_PROGRESS_CHANNEL, payload)
+  }
 
   /**
    * 从插件包文件（ZPX 或 ZIP）中读取并解析 plugin.json，同时返回格式标识。

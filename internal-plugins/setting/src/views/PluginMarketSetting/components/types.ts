@@ -28,3 +28,14 @@ export interface CategoryLayoutSection {
   count?: number
   plugins?: string[]
 }
+
+export type PluginDownloadStatus = 'downloading' | 'installing' | 'success' | 'error' | 'cancelled'
+
+export interface PluginDownloadState {
+  taskId?: string
+  status: PluginDownloadStatus
+  progress: number | null
+  receivedBytes?: number
+  totalBytes?: number
+  error?: string
+}

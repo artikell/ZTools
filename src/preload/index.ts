@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 export interface Command {
   name: string
@@ -67,6 +67,13 @@ const api = {
   fetchPluginMarket: () => ipcRenderer.invoke('fetch-plugin-market'),
   installPluginFromMarket: (plugin: any) =>
     ipcRenderer.invoke('install-plugin-from-market', plugin),
+  cancelPluginMarketDownload: (pluginNameOrTaskId: string) =>
+    ipcRenderer.invoke('cancel-plugin-market-download', pluginNameOrTaskId),
+  onPluginMarketDownloadProgress: (callback: (payload: any) => void) => {
+    const handler = (_event: IpcRendererEvent, payload: any): void => callback(payload)
+    ipcRenderer.on('plugin-market-download-progress', handler)
+    return () => ipcRenderer.removeListener('plugin-market-download-progress', handler)
+  },
   getPluginReadme: (pluginPath: string): Promise<any> =>
     ipcRenderer.invoke('get-plugin-readme', pluginPath),
   getPluginDbData: (pluginName: string): Promise<any> =>
@@ -513,6 +520,10 @@ declare global {
         error?: string
         plugin?: any
       }>
+      cancelPluginMarketDownload: (
+        pluginNameOrTaskId: string
+      ) => Promise<{ success: boolean; error?: string }>
+      onPluginMarketDownloadProgress: (callback: (payload: any) => void) => () => void
       deletePlugin: (pluginPath: string) => Promise<{ success: boolean; error?: string }>
       exportAllPlugins: () => Promise<{
         success: boolean
