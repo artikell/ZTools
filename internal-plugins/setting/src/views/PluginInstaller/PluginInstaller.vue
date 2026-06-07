@@ -29,6 +29,7 @@ const errorMsg = ref('')
 const pluginInfo = ref<PluginInfo | null>(null)
 const installing = ref(false)
 const installed = ref(false)
+const installedPlugin = ref<any | null>(null)
 const showSecurityDialog = ref(false)
 const installFilePath = ref<string>()
 
@@ -73,6 +74,7 @@ async function confirmInstall(): Promise<void> {
       const actionText = wasInstalled ? '覆盖安装' : '安装'
       success(`插件${actionText}成功`)
       installed.value = true
+      installedPlugin.value = result.plugin || null
       if (pluginInfo.value) {
         emit('installed', pluginInfo.value.name)
       }
@@ -83,6 +85,49 @@ async function confirmInstall(): Promise<void> {
     showError(err instanceof Error ? err.message : '安装失败')
   } finally {
     installing.value = false
+  }
+}
+
+async function resolveInstalledPlugin(): Promise<any | null> {
+  if (installedPlugin.value?.path) {
+    return installedPlugin.value
+  }
+  if (!pluginInfo.value?.name) {
+    return null
+  }
+
+  try {
+    const plugins = await window.ztools.internal.getAllPlugins()
+    const plugin = plugins.find((item: any) => item.name === pluginInfo.value?.name) || null
+    installedPlugin.value = plugin
+    return plugin
+  } catch (err) {
+    console.error('查找已安装插件失败:', err)
+    return null
+  }
+}
+
+async function openInstalledPlugin(): Promise<void> {
+  const plugin = await resolveInstalledPlugin()
+  if (!plugin?.path) {
+    showError('无法打开插件: 路径未知')
+    return
+  }
+
+  try {
+    const result = await window.ztools.internal.launch({
+      path: plugin.path,
+      type: 'plugin',
+      name: plugin.title || plugin.name,
+      param: {}
+    })
+
+    if (result && !result.success) {
+      showError(`无法打开插件: ${result.error || '未知错误'}`)
+    }
+  } catch (err: unknown) {
+    console.error('打开插件失败:', err)
+    showError(`打开插件失败: ${err instanceof Error ? err.message : '未知错误'}`)
   }
 }
 
@@ -129,7 +174,9 @@ useJumpFunction<PluginInstallerJumpFunction>((state) => {
           alt="插件图标"
           draggable="false"
         />
-        <div v-else class="plugin-logo placeholder">🧩</div>
+        <div v-else class="plugin-logo placeholder">
+          <div class="i-z-plugin font-size-32px" />
+        </div>
         <div class="plugin-meta">
           <h2 class="plugin-name">{{ pluginInfo.title || pluginInfo.name }}</h2>
           <p class="plugin-desc">{{ pluginInfo.description || '暂无描述' }}</p>
@@ -174,12 +221,16 @@ useJumpFunction<PluginInstallerJumpFunction>((state) => {
 
       <!-- 安装按钮 -->
       <div class="installer-actions">
-        <button v-if="installed" class="btn btn-lg btn-solid install-btn" @click="outPlugin">
-          完成
-        </button>
+        <template v-if="installed">
+          <button class="btn btn-lg btn-secondary action-btn" @click="outPlugin">完成</button>
+          <button class="btn btn-lg btn-solid action-btn" @click="openInstalledPlugin">
+            <div class="i-z-play font-size-16px" />
+            <span>打开</span>
+          </button>
+        </template>
         <button
           v-else
-          class="btn btn-lg btn-solid install-btn"
+          class="btn btn-lg btn-solid install-btn action-btn"
           :disabled="installing"
           @click="handleInstallClick"
         >
@@ -434,26 +485,37 @@ useJumpFunction<PluginInstallerJumpFunction>((state) => {
 /* 安装按钮 */
 .installer-actions {
   margin-top: 8px;
+  display: flex;
+  gap: 10px;
 }
 
-.install-btn {
-  width: 100%;
+.action-btn {
+  flex: 1;
+  min-width: 0;
   padding: 12px 24px;
   font-size: 15px;
   font-weight: 600;
   border-radius: 10px;
-  border: none;
   cursor: pointer;
   transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.install-btn {
+  width: 100%;
+  border: none;
   background: var(--primary-color);
   color: var(--text-on-primary);
 }
 
-.install-btn:hover:not(:disabled) {
+.action-btn:hover:not(:disabled) {
   opacity: 0.9;
 }
 
-.install-btn:disabled {
+.action-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
