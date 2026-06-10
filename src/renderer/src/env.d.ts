@@ -1,5 +1,7 @@
 // Ambient type declarations for renderer, so TS knows window.ztools
 
+import type { CommonKeyboardModifier } from '@renderer/utils/convertKeyboardEvent'
+
 /**
  * 上次匹配状态接口
  */
@@ -156,6 +158,7 @@ declare global {
       sendInputEvent: (event: {
         type: 'keyDown' | 'keyUp' | 'char' | 'mouseDown' | 'mouseUp' | 'mouseMove'
         keyCode?: string
+        modifiers?: CommonKeyboardModifier[]
         x?: number
         y?: number
         button?: 'left' | 'right' | 'middle'

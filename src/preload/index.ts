@@ -576,6 +576,7 @@ declare global {
       sendInputEvent: (event: {
         type: 'keyDown' | 'keyUp' | 'char' | 'mouseDown' | 'mouseUp' | 'mouseMove'
         keyCode?: string
+        modifiers?: Array<'shift' | 'ctrl' | 'alt' | 'meta'>
         x?: number
         y?: number
         button?: 'left' | 'right' | 'middle'

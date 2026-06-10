@@ -43,6 +43,7 @@ import SearchBox from './components/search/SearchBox.vue'
 import SearchResults from './components/search/SearchResults.vue'
 import { useCommandDataStore } from './stores/commandDataStore'
 import { useWindowStore } from './stores/windowStore'
+import { CommonKeyboardModifier, readModifiers } from '@renderer/utils/convertKeyboardEvent'
 
 // FileItem 接口（从剪贴板管理器返回的格式）
 interface FileItem {
@@ -216,10 +217,12 @@ function handlePluginStepExit(): void {
 // 将浏览器 KeyboardEvent 转换为 Electron KeyboardInputEvent 格式
 function convertToElectronKeyboardEvent(
   direction: 'left' | 'right' | 'up' | 'down' | 'enter',
-  type: 'keyDown' | 'keyUp' = 'keyDown'
+  type: 'keyDown' | 'keyUp' = 'keyDown',
+  modifiers: CommonKeyboardModifier[] = []
 ): {
   type: 'keyDown' | 'keyUp'
   keyCode: string
+  modifiers: CommonKeyboardModifier[]
 } {
   // 映射方向键和回车键的 keyCode
   const keyCodeMap: Record<string, string> = {
@@ -232,7 +235,8 @@ function convertToElectronKeyboardEvent(
 
   return {
     type,
-    keyCode: keyCodeMap[direction]
+    keyCode: keyCodeMap[direction],
+    modifiers
   }
 }
 
@@ -252,9 +256,11 @@ async function handleArrowKeydown(
     event.stopPropagation()
   }
 
+  const modifiers = readModifiers(event)
+
   // 转换为 Electron 格式
-  const keyDownEvent = convertToElectronKeyboardEvent(direction, 'keyDown')
-  const keyUpEvent = convertToElectronKeyboardEvent(direction, 'keyUp')
+  const keyDownEvent = convertToElectronKeyboardEvent(direction, 'keyDown', modifiers)
+  const keyUpEvent = convertToElectronKeyboardEvent(direction, 'keyUp', modifiers)
 
   // 发送给主进程：先发送 keyDown，再发送 keyUp
   try {
